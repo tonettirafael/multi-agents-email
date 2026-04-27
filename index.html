@@ -1,0 +1,2394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pipeline Multi-Agente · Leitura de E-mails de Agendamento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg-deep: #0a0b0f;
+  --bg: #0f1117;
+  --bg-soft: #161922;
+  --bg-card: #1b1f2b;
+  --line: #262b39;
+  --line-soft: #1f2330;
+  --text: #e8e6e0;
+  --text-muted: #9a9aa3;
+  --text-dim: #5b6072;
+  --accent: #ffb547;     /* âmbar quente — destaque principal */
+  --accent-2: #6db3f2;   /* azul aço — dados / texto */
+  --accent-3: #c084f5;   /* lilás — visão */
+  --accent-4: #5cd1a0;   /* verde mineral — anexos */
+  --accent-5: #f0816c;   /* coral — consolidador */
+  --accent-router: #ffd166; /* amarelo — classificador */
+  --shadow-glow: 0 0 0 1px rgba(255, 181, 71, 0.15), 0 8px 40px rgba(255, 181, 71, 0.08);
+  --grain: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.06 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: var(--grain);
+  pointer-events: none;
+  z-index: 999;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+}
+
+/* === DECK SHELL === */
+.deck {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  padding: 64px 80px;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateX(40px);
+  transition: opacity .6s cubic-bezier(.2,.7,.2,1), transform .6s cubic-bezier(.2,.7,.2,1);
+  pointer-events: none;
+  background: var(--bg);
+}
+.slide.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.slide.exiting {
+  opacity: 0;
+  transform: translateX(-40px);
+}
+
+/* Slide background patterns */
+.slide::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px);
+  background-size: 64px 64px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+/* === HEADER / FOOTER === */
+.slide-chrome {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 32px;
+  position: relative;
+  z-index: 2;
+}
+.slide-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.slide-meta .dot {
+  color: var(--accent);
+}
+.slide-num {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* === NAVIGATION === */
+.nav {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(15, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  z-index: 100;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.nav button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 999px;
+  transition: all .2s;
+  font-family: inherit;
+  font-size: inherit;
+}
+.nav button:hover { background: var(--bg-card); color: var(--accent); }
+.nav button:disabled { color: var(--text-dim); cursor: not-allowed; }
+.nav .indicator {
+  display: flex;
+  gap: 4px;
+}
+.nav .pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  cursor: pointer;
+  transition: all .2s;
+}
+.nav .pip.active {
+  background: var(--accent);
+  width: 18px;
+  border-radius: 3px;
+}
+.nav .counter {
+  color: var(--text-muted);
+  padding: 0 8px;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* === TYPOGRAPHY === */
+h1, h2, h3 { font-family: 'Fraunces', serif; font-weight: 400; letter-spacing: -0.02em; }
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 24px;
+}
+
+/* ============================================================
+   SLIDE 1 — COVER
+   ============================================================ */
+.cover {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 80px;
+  height: 100%;
+  align-items: center;
+}
+.cover-left h1 {
+  font-size: clamp(60px, 7vw, 110px);
+  line-height: 0.92;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+}
+.cover-left h1 .accent {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--accent);
+  display: block;
+}
+.cover-left .lead {
+  margin-top: 32px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 540px;
+  font-weight: 300;
+}
+.cover-meta-block {
+  margin-top: 56px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  max-width: 540px;
+}
+.cover-meta-block .meta-item {
+  border-left: 2px solid var(--accent);
+  padding-left: 16px;
+}
+.cover-meta-block .meta-item .label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.cover-meta-block .meta-item .value {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  color: var(--text);
+}
+
+/* Cover visual: orbital diagram */
+.cover-visual {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.orbit-svg { width: 100%; height: 100%; overflow: visible; }
+.orbit-ring {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.orbit-ring.solid { stroke: var(--line); stroke-dasharray: none; opacity: 0.5; }
+.orbit-core {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.orbit-core-text {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 18px;
+  fill: var(--accent);
+  text-anchor: middle;
+}
+.orbit-node {
+  transform-origin: 250px 250px;
+}
+.orbit-node circle {
+  fill: var(--bg-card);
+  stroke-width: 1.5;
+}
+.orbit-node text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: var(--text);
+  text-anchor: middle;
+  letter-spacing: 0.05em;
+}
+@keyframes spin-cw { to { transform: rotate(360deg); } }
+@keyframes spin-ccw { to { transform: rotate(-360deg); } }
+.orbit-1 { animation: spin-cw 60s linear infinite; }
+.orbit-2 { animation: spin-ccw 90s linear infinite; }
+.orbit-3 { animation: spin-cw 120s linear infinite; }
+
+.orbit-pulse {
+  fill: var(--accent);
+  opacity: 0;
+  animation: pulse 3s ease-out infinite;
+}
+@keyframes pulse {
+  0% { r: 8; opacity: 0.6; }
+  100% { r: 80; opacity: 0; }
+}
+
+/* ============================================================
+   SLIDE 2 — THE PROBLEM
+   ============================================================ */
+.problem-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 80px;
+  flex: 1;
+  align-items: center;
+}
+.problem-left h2 {
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 300;
+  margin-bottom: 32px;
+}
+.problem-left h2 em {
+  font-style: italic;
+  color: var(--accent);
+}
+.problem-left p {
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  font-weight: 300;
+  max-width: 480px;
+}
+
+/* Email mockup with chaos */
+.email-stack {
+  position: relative;
+  height: 480px;
+  perspective: 1200px;
+}
+.email-card {
+  position: absolute;
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transition: transform 0.6s cubic-bezier(.2,.7,.2,1);
+}
+.email-card .from { color: var(--accent-2); margin-bottom: 4px; }
+.email-card .subj { color: var(--text); font-family: 'Manrope', sans-serif; font-size: 14px; font-weight: 500; margin-bottom: 12px; }
+.email-card .body { line-height: 1.5; font-size: 11px; opacity: 0.7; }
+.email-card .badges { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.email-card .badge {
+  padding: 3px 8px; border-radius: 999px; font-size: 9px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  letter-spacing: 0.05em;
+}
+.email-card .badge.img { color: var(--accent-3); border-color: rgba(192,132,245,0.3); }
+.email-card .badge.pdf { color: var(--accent-4); border-color: rgba(92,209,160,0.3); }
+.email-card .badge.xlsx { color: var(--accent-4); border-color: rgba(92,209,160,0.3); }
+
+.email-card:nth-child(1) { transform: translateY(0) rotate(-3deg) translateZ(0); top: 0; }
+.email-card:nth-child(2) { transform: translateY(60px) rotate(2deg) translateZ(-20px); top: 80px; }
+.email-card:nth-child(3) { transform: translateY(120px) rotate(-1deg) translateZ(-40px); top: 160px; opacity: 0.7; }
+.email-card:nth-child(4) { transform: translateY(180px) rotate(3deg) translateZ(-60px); top: 240px; opacity: 0.4; }
+.email-card:nth-child(5) { transform: translateY(240px) rotate(-2deg) translateZ(-80px); top: 320px; opacity: 0.2; }
+
+.problem-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  margin-top: 48px;
+}
+.stat {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.stat .num {
+  font-family: 'Fraunces', serif;
+  font-size: 48px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--accent);
+}
+.stat .num em { font-style: italic; }
+.stat .desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+/* ============================================================
+   SLIDE 3 — ARCHITECTURE OVERVIEW
+   ============================================================ */
+.arch-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 48px;
+}
+.arch-title h2 {
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 300;
+}
+.arch-title h2 em { font-style: italic; color: var(--accent); }
+.arch-title .caption {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 380px;
+  line-height: 1.5;
+}
+
+.arch-flow {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.arch-flow svg { width: 100%; height: 100%; max-height: 520px; }
+
+.flow-stage {
+  fill: var(--bg-card);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.flow-stage.active { stroke: var(--accent); }
+.flow-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: var(--text);
+  text-anchor: middle;
+  letter-spacing: 0.08em;
+}
+.flow-label.dim { fill: var(--text-muted); }
+.flow-title {
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  fill: var(--text);
+  text-anchor: middle;
+  font-style: italic;
+}
+.flow-line {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 4 4;
+}
+.flow-arrow {
+  fill: var(--text-muted);
+}
+
+/* ============================================================
+   SLIDE 4 — LIVE PIPELINE ANIMATION (the centerpiece)
+   ============================================================ */
+.pipeline-container {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 48px;
+  min-height: 0;
+}
+.pipeline-side h2 {
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 300;
+  margin-bottom: 16px;
+}
+.pipeline-side h2 em { font-style: italic; color: var(--accent); }
+.pipeline-side .lead {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+.pipeline-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pipe-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all .2s;
+}
+.pipe-btn:hover { border-color: var(--accent); color: var(--accent); }
+.pipe-btn.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.pipe-btn.primary:hover { background: var(--text); border-color: var(--text); color: var(--bg); }
+.pipe-btn .arrow { font-size: 14px; }
+
+.pipeline-stage {
+  position: relative;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.stage-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.stage-header .status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: blink 1.2s ease-in-out infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.stage-canvas {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+.stage-canvas svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Pipeline node styles */
+.p-node-bg {
+  fill: var(--bg-card);
+  stroke: var(--line);
+  stroke-width: 1.5;
+  transition: all 0.4s ease;
+}
+.p-node.active .p-node-bg {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 12px currentColor);
+}
+.p-node.done .p-node-bg {
+  stroke-dasharray: none;
+}
+.p-node-icon {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.p-node-name {
+  font-family: 'Fraunces', serif;
+  font-size: 13px;
+  fill: var(--text);
+  text-anchor: middle;
+  font-style: italic;
+}
+.p-node-role {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  fill: var(--text-muted);
+  text-anchor: middle;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.p-edge {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  fill: none;
+}
+.p-edge.active {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 4px var(--accent));
+}
+
+.particle {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.log-output {
+  position: absolute;
+  bottom: 16px;
+  left: 24px;
+  right: 24px;
+  background: rgba(10, 11, 15, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  max-height: 110px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.log-line {
+  display: flex;
+  gap: 12px;
+  opacity: 0;
+  animation: log-in 0.4s forwards;
+}
+@keyframes log-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.log-time { color: var(--text-dim); flex-shrink: 0; }
+.log-tag {
+  color: var(--accent);
+  flex-shrink: 0;
+  width: 60px;
+}
+.log-msg { color: var(--text); }
+
+/* ============================================================
+   SLIDE 5 — AGENT CARDS
+   ============================================================ */
+.agents-title {
+  margin-bottom: 32px;
+}
+.agents-title h2 {
+  font-size: 48px;
+  line-height: 1;
+  font-weight: 300;
+}
+.agents-title h2 em { font-style: italic; color: var(--accent); }
+.agents-title .caption {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  max-width: 600px;
+  line-height: 1.5;
+}
+
+.agents-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  min-height: 0;
+}
+.agent-card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  transition: transform .3s, border-color .3s;
+}
+.agent-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--agent-color, var(--accent));
+}
+.agent-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--agent-color, var(--accent));
+}
+.agent-num {
+  font-family: 'Fraunces', serif;
+  font-size: 56px;
+  line-height: 1;
+  color: var(--agent-color, var(--accent));
+  font-style: italic;
+  font-weight: 300;
+  opacity: 0.4;
+  position: absolute;
+  top: 16px;
+  right: 20px;
+}
+.agent-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(255,181,71,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  color: var(--agent-color, var(--accent));
+}
+.agent-icon svg { width: 18px; height: 18px; }
+.agent-role {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.agent-name {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  line-height: 1.1;
+  color: var(--text);
+  margin-bottom: 12px;
+  font-weight: 400;
+}
+.agent-name em { font-style: italic; color: var(--agent-color, var(--accent)); }
+.agent-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  flex: 1;
+}
+.agent-meta {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.agent-meta .row { display: flex; justify-content: space-between; }
+.agent-meta .row .v { color: var(--text); }
+
+/* ============================================================
+   SLIDE 6 — DECISION TREE
+   ============================================================ */
+.decision-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 64px;
+  flex: 1;
+  align-items: center;
+}
+.decision-left h2 {
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 300;
+  margin-bottom: 24px;
+}
+.decision-left h2 em { font-style: italic; color: var(--accent); }
+.decision-left .lead {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  font-weight: 300;
+}
+.decision-points {
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dp {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.dp .dp-num {
+  font-family: 'Fraunces', serif;
+  font-size: 24px;
+  font-style: italic;
+  color: var(--accent);
+  width: 32px;
+  flex-shrink: 0;
+}
+.dp .dp-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.dp .dp-text strong { color: var(--text); font-weight: 500; }
+
+.decision-tree-wrap svg {
+  width: 100%;
+  height: auto;
+  max-height: 580px;
+}
+.dt-node-bg {
+  fill: var(--bg-card);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.dt-node-bg.diamond { fill: var(--bg-soft); stroke: var(--accent); }
+.dt-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: var(--text);
+  text-anchor: middle;
+  letter-spacing: 0.05em;
+}
+.dt-label.title {
+  font-family: 'Fraunces', serif;
+  font-size: 12px;
+  font-style: italic;
+}
+.dt-edge {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  fill: none;
+}
+.dt-edge-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  fill: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+.dt-edge-label.yes { fill: var(--accent-4); }
+.dt-edge-label.no { fill: var(--accent-5); }
+
+/* ============================================================
+   SLIDE 7 — CONSOLIDATION
+   ============================================================ */
+.consol-title {
+  margin-bottom: 32px;
+}
+.consol-title h2 {
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 300;
+}
+.consol-title h2 em { font-style: italic; color: var(--accent); }
+.consol-title .caption {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  max-width: 700px;
+  line-height: 1.5;
+}
+
+.consol-flow {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 32px;
+  align-items: center;
+  min-height: 0;
+}
+
+.consol-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.candidate-card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--c-color, var(--accent));
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.candidate-card .src {
+  color: var(--c-color, var(--accent));
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.candidate-card .field {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+}
+.candidate-card .field .v { color: var(--text); }
+.candidate-card .field.null .v { color: var(--text-dim); font-style: italic; }
+.candidate-card .conf {
+  margin-top: 8px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.conf-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--bg);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.conf-bar .fill {
+  height: 100%;
+  background: var(--c-color, var(--accent));
+  border-radius: 2px;
+  transition: width 1s ease;
+}
+.conf-val {
+  font-size: 9px;
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: right;
+}
+
+.consol-merge-svg {
+  width: 100%;
+  height: 280px;
+}
+.merge-line {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  fill: none;
+}
+.merge-line.active { stroke: var(--accent); filter: drop-shadow(0 0 4px var(--accent)); }
+.merge-core {
+  fill: var(--bg-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.merge-core-text {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 13px;
+  fill: var(--accent);
+  text-anchor: middle;
+}
+.merge-core-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  fill: var(--text-muted);
+  text-anchor: middle;
+  letter-spacing: 0.1em;
+}
+
+.consol-output {
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  position: relative;
+}
+.consol-output::before {
+  content: 'FINAL · email_tasks';
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  background: var(--bg);
+  padding: 0 10px;
+  font-size: 9px;
+  color: var(--accent);
+  letter-spacing: 0.18em;
+}
+.consol-output .field {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--line);
+  padding: 4px 0;
+}
+.consol-output .field:last-child { border-bottom: none; }
+.consol-output .field .k { color: var(--text-muted); }
+.consol-output .field .v { color: var(--text); }
+.consol-output .field .v.accept { color: var(--accent-4); }
+.consol-output .src-tag {
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-left: 6px;
+}
+
+/* ============================================================
+   SLIDE 8 — IMPACT / CLOSING
+   ============================================================ */
+.impact-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 80px;
+  align-items: center;
+}
+.impact-left h2 {
+  font-size: clamp(48px, 5.5vw, 84px);
+  line-height: 0.95;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  margin-bottom: 32px;
+}
+.impact-left h2 em {
+  font-style: italic;
+  color: var(--accent);
+}
+.impact-left .lead {
+  font-size: 18px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  max-width: 540px;
+  font-weight: 300;
+}
+.impact-numbers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px 48px;
+  margin-top: 48px;
+}
+.imp-num {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.imp-num .big {
+  font-family: 'Fraunces', serif;
+  font-size: 56px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+.imp-num .big em { font-style: italic; color: var(--accent); }
+.imp-num .desc {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.impact-right {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.impact-quote {
+  position: relative;
+  padding: 40px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  max-width: 420px;
+}
+.impact-quote::before {
+  content: '«';
+  position: absolute;
+  top: -8px;
+  left: 24px;
+  font-family: 'Fraunces', serif;
+  font-size: 80px;
+  color: var(--accent);
+  line-height: 0.5;
+}
+.impact-quote q {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--text);
+  font-weight: 300;
+  display: block;
+  quotes: none;
+}
+.impact-quote q::before, .impact-quote q::after { content: ''; }
+.impact-quote .signature {
+  margin-top: 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Hover hint banner on first load */
+.intro-hint {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0;
+  animation: hint-show 0.6s 1.5s forwards, hint-hide 0.6s 5s forwards;
+  z-index: 200;
+  pointer-events: none;
+}
+@keyframes hint-show { to { opacity: 1; } }
+@keyframes hint-hide { to { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+  <!-- ============================================================
+       SLIDE 1 — COVER
+  ============================================================ -->
+  <section class="slide active" data-slide="1">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> APRESENTAÇÃO EXECUTIVA · ARQUITETURA</div>
+      <div class="slide-num">01 / 08</div>
+    </div>
+
+    <div class="cover">
+      <div class="cover-left">
+        <h1>
+          Cinco agentes,
+          <span class="accent">uma decisão.</span>
+        </h1>
+        <p class="lead">
+          Como a leitura automatizada de e-mails de agendamento foi reconstruída como um pipeline multi-agente —
+          onde cada modelo enxerga apenas o que precisa, e a verdade é negociada entre eles.
+        </p>
+        <div class="cover-meta-block">
+          <div class="meta-item">
+            <div class="label">Pipeline</div>
+            <div class="value">v2 · multi-agente</div>
+          </div>
+          <div class="meta-item">
+            <div class="label">Componentes</div>
+            <div class="value">31 nós · 5 LLMs</div>
+          </div>
+          <div class="meta-item">
+            <div class="label">Domínio</div>
+            <div class="value">Logística · Cargas</div>
+          </div>
+          <div class="meta-item">
+            <div class="label">Saída</div>
+            <div class="value">Supabase</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cover-visual">
+        <svg class="orbit-svg" viewBox="0 0 500 500">
+          <!-- Orbit rings -->
+          <circle cx="250" cy="250" r="80" class="orbit-ring solid" />
+          <circle cx="250" cy="250" r="140" class="orbit-ring" />
+          <circle cx="250" cy="250" r="200" class="orbit-ring" />
+
+          <!-- Pulse from center -->
+          <circle cx="250" cy="250" class="orbit-pulse" />
+
+          <!-- Core (consolidator) -->
+          <circle cx="250" cy="250" r="44" class="orbit-core" />
+          <text x="250" y="246" class="orbit-core-text">consolidador</text>
+          <text x="250" y="262" class="orbit-core-text" style="font-size:9px; fill: var(--text-muted); font-style: normal; letter-spacing: 0.15em;">AGENTE 5</text>
+
+          <!-- Inner ring: classifier -->
+          <g class="orbit-node orbit-1">
+            <g transform="translate(250, 250)">
+              <g transform="translate(0, -80)">
+                <circle r="22" style="stroke: var(--accent-router);" />
+                <text y="4" style="fill: var(--accent-router); font-style: italic; font-family: Fraunces; font-size: 11px;">router</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- Middle ring: text + vision + attachment -->
+          <g class="orbit-node orbit-2">
+            <g transform="translate(250, 250)">
+              <g transform="translate(140, 0)">
+                <circle r="22" style="stroke: var(--accent-2);" />
+                <text y="4" style="fill: var(--accent-2);">texto</text>
+              </g>
+              <g transform="translate(-70, 121)">
+                <circle r="22" style="stroke: var(--accent-3);" />
+                <text y="4" style="fill: var(--accent-3);">visão</text>
+              </g>
+              <g transform="translate(-70, -121)">
+                <circle r="22" style="stroke: var(--accent-4);" />
+                <text y="4" style="fill: var(--accent-4);">anexos</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- Outer ring: outputs -->
+          <g class="orbit-node orbit-3">
+            <g transform="translate(250, 250)">
+              <g transform="translate(180, 90)">
+                <rect x="-32" y="-12" width="64" height="24" rx="4" fill="var(--bg-card)" stroke="var(--line)" />
+                <text y="4" style="fill: var(--text-muted); font-size: 9px;">email_tasks</text>
+              </g>
+              <g transform="translate(-180, -90)">
+                <rect x="-32" y="-12" width="64" height="24" rx="4" fill="var(--bg-card)" stroke="var(--line)" />
+                <text y="4" style="fill: var(--text-muted); font-size: 9px;">revisão</text>
+              </g>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 2 — THE PROBLEM
+  ============================================================ -->
+  <section class="slide" data-slide="2">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 01 · O PROBLEMA</div>
+      <div class="slide-num">02 / 08</div>
+    </div>
+
+    <div class="problem-grid">
+      <div class="problem-left">
+        <div class="eyebrow">Por que multi-agente</div>
+        <h2>Um e-mail nunca<br>vem <em>limpo</em>.</h2>
+        <p>
+          Confirmações de agendamento de carga chegam em qualquer formato: texto solto,
+          tabelas dentro de imagens, PDFs digitalizados, planilhas anexas, threads encadeadas.
+          Um único modelo tentando lidar com tudo é frágil — e cego ao contexto.
+        </p>
+
+        <div class="problem-stats">
+          <div class="stat">
+            <div class="num"><em>3</em></div>
+            <div class="desc">superfícies onde os dados podem estar: texto, imagem ou anexo</div>
+          </div>
+          <div class="stat">
+            <div class="num">∞</div>
+            <div class="desc">variações de assunto, layout e remetente entre clientes</div>
+          </div>
+          <div class="stat">
+            <div class="num"><em>1</em></div>
+            <div class="desc">decisão final por shipment: aceito, data, senha, fonte</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="email-stack">
+        <div class="email-card">
+          <div class="from">torre.controle@mondelez.com</div>
+          <div class="subj">Solicitação de Agendamento Mondelez · Carga 8847291</div>
+          <div class="body">Prezados, segue planilha em anexo com as 12 cargas para confirmação na próxima semana...</div>
+          <div class="badges"><span class="badge xlsx">XLSX</span><span class="badge">12 linhas</span></div>
+        </div>
+        <div class="email-card">
+          <div class="from">portal@oniz.com.br</div>
+          <div class="subj">RE: Confirmação de janela · Carga 8847291</div>
+          <div class="body">Confirmamos o agendamento para 28/04 às 14h. Senha: ON-44218.</div>
+          <div class="badges"><span class="badge img">PRINT TABELA</span></div>
+        </div>
+        <div class="email-card">
+          <div class="from">supply@cliente-x.com.br</div>
+          <div class="subj">Comprovante de agendamento</div>
+          <div class="body">Em anexo o PDF gerado pelo nosso sistema...</div>
+          <div class="badges"><span class="badge pdf">PDF</span><span class="badge">scan</span></div>
+        </div>
+        <div class="email-card">
+          <div class="from">agendamento.sul@opentechgr.com.br</div>
+          <div class="subj">Re: Re: Re: Confirmação</div>
+          <div class="body">Segue o histórico abaixo conforme tratativa...</div>
+          <div class="badges"><span class="badge">thread longa</span></div>
+        </div>
+        <div class="email-card">
+          <div class="from">noreply@portal-fornecedor.com</div>
+          <div class="subj">Atualização de status</div>
+          <div class="body">Este é um e-mail automático...</div>
+          <div class="badges"><span class="badge">ruído</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 3 — ARCHITECTURE OVERVIEW
+  ============================================================ -->
+  <section class="slide" data-slide="3">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 02 · ARQUITETURA</div>
+      <div class="slide-num">03 / 08</div>
+    </div>
+
+    <div class="arch-title">
+      <div>
+        <div class="eyebrow">Visão geral do pipeline</div>
+        <h2>Quatro <em>etapas</em>, cinco agentes</h2>
+      </div>
+      <div class="caption">
+        Cada e-mail passa por filtros baratos antes de tocar um modelo. Quando toca,
+        toca apenas o agente certo. A consolidação acontece no fim — não no meio.
+      </div>
+    </div>
+
+    <div class="arch-flow">
+      <svg viewBox="0 0 1400 480" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="var(--text-muted)"/>
+          </marker>
+        </defs>
+
+        <!-- Stage labels (top) -->
+        <text x="140" y="40" class="flow-label" style="font-size: 11px;">ETAPA 01</text>
+        <text x="140" y="60" class="flow-title">Captura</text>
+
+        <text x="430" y="40" class="flow-label" style="font-size: 11px;">ETAPA 02</text>
+        <text x="430" y="60" class="flow-title">Triagem &amp; pré-processo</text>
+
+        <text x="850" y="40" class="flow-label" style="font-size: 11px;">ETAPA 03</text>
+        <text x="850" y="60" class="flow-title">Especialistas em paralelo</text>
+
+        <text x="1240" y="40" class="flow-label" style="font-size: 11px;">ETAPA 04</text>
+        <text x="1240" y="60" class="flow-title">Consolidação &amp; saída</text>
+
+        <!-- Stage 1: Capture -->
+        <rect x="50" y="120" width="180" height="80" rx="8" class="flow-stage active" />
+        <text x="140" y="148" class="flow-label" style="font-size: 11px; fill: var(--accent);">SCHEDULE TRIGGER</text>
+        <text x="140" y="170" class="flow-title" style="font-size: 14px;">Outlook</text>
+        <text x="140" y="188" class="flow-label dim" style="font-size: 9px;">get many messages</text>
+
+        <!-- Stage 2: Triage -->
+        <rect x="320" y="120" width="220" height="80" rx="8" class="flow-stage" />
+        <text x="430" y="148" class="flow-label" style="font-size: 10px;">FILTROS · CÓDIGO</text>
+        <text x="430" y="170" class="flow-title" style="font-size: 14px;">Pré-processamento</text>
+        <text x="430" y="188" class="flow-label dim" style="font-size: 9px;">limpa lixo, resolve imagens inline</text>
+
+        <rect x="320" y="240" width="220" height="80" rx="8" class="flow-stage" />
+        <text x="430" y="268" class="flow-label" style="font-size: 10px; fill: var(--accent-router);">AGENTE 1 · GPT-5-mini</text>
+        <text x="430" y="290" class="flow-title" style="font-size: 14px;">Classificador / Router</text>
+        <text x="430" y="308" class="flow-label dim" style="font-size: 9px;">decide quais agentes acionar</text>
+
+        <!-- Stage 3: Specialists (parallel) -->
+        <rect x="640" y="80" width="220" height="80" rx="8" class="flow-stage" style="stroke: var(--accent-2); stroke-dasharray: 4 4;" />
+        <text x="750" y="108" class="flow-label" style="font-size: 10px; fill: var(--accent-2);">AGENTE 2 · GPT-5-mini</text>
+        <text x="750" y="130" class="flow-title" style="font-size: 14px;">Texto</text>
+        <text x="750" y="148" class="flow-label dim" style="font-size: 9px;">extrai do corpo do e-mail</text>
+
+        <rect x="640" y="200" width="220" height="80" rx="8" class="flow-stage" style="stroke: var(--accent-3); stroke-dasharray: 4 4;" />
+        <text x="750" y="228" class="flow-label" style="font-size: 10px; fill: var(--accent-3);">AGENTE 3 · GPT-5 Vision</text>
+        <text x="750" y="250" class="flow-title" style="font-size: 14px;">Visão</text>
+        <text x="750" y="268" class="flow-label dim" style="font-size: 9px;">lê tabelas dentro de imagens</text>
+
+        <rect x="640" y="320" width="220" height="80" rx="8" class="flow-stage" style="stroke: var(--accent-4); stroke-dasharray: 4 4;" />
+        <text x="750" y="348" class="flow-label" style="font-size: 10px; fill: var(--accent-4);">AGENTE 4 · GPT-5</text>
+        <text x="750" y="370" class="flow-title" style="font-size: 14px;">Anexos</text>
+        <text x="750" y="388" class="flow-label dim" style="font-size: 9px;">PDF · XLSX · DOCX · CSV</text>
+
+        <!-- Merge -->
+        <rect x="940" y="200" width="160" height="80" rx="8" class="flow-stage" />
+        <text x="1020" y="228" class="flow-label" style="font-size: 10px;">CÓDIGO</text>
+        <text x="1020" y="250" class="flow-title" style="font-size: 14px;">Merge</text>
+        <text x="1020" y="268" class="flow-label dim" style="font-size: 9px;">candidatos</text>
+
+        <!-- Stage 4: Consolidator + outputs -->
+        <rect x="1160" y="160" width="200" height="80" rx="8" class="flow-stage" style="stroke: var(--accent-5);" />
+        <text x="1260" y="188" class="flow-label" style="font-size: 10px; fill: var(--accent-5);">AGENTE 5 · GPT-5-mini</text>
+        <text x="1260" y="210" class="flow-title" style="font-size: 14px;">Consolidador</text>
+        <text x="1260" y="228" class="flow-label dim" style="font-size: 9px;">resolve conflitos</text>
+
+        <rect x="1160" y="280" width="95" height="60" rx="8" class="flow-stage" />
+        <text x="1207" y="304" class="flow-label" style="font-size: 9px;">SUPABASE</text>
+        <text x="1207" y="322" class="flow-title" style="font-size: 12px;">tasks</text>
+
+        <rect x="1265" y="280" width="95" height="60" rx="8" class="flow-stage" />
+        <text x="1312" y="304" class="flow-label" style="font-size: 9px;">SUPABASE</text>
+        <text x="1312" y="322" class="flow-title" style="font-size: 12px;">revisão</text>
+
+        <!-- Connectors -->
+        <path d="M 230 160 L 320 160" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 430 200 L 430 240" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 540 280 Q 600 280, 600 120 L 640 120" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 540 280 L 640 240" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 540 280 Q 600 280, 600 360 L 640 360" class="flow-line" marker-end="url(#arrowhead)" />
+
+        <path d="M 860 120 Q 940 120, 940 240 L 940 240" class="flow-line" />
+        <path d="M 860 240 L 940 240" class="flow-line" />
+        <path d="M 860 360 Q 940 360, 940 240" class="flow-line" />
+        <path d="M 940 240 L 940 240" class="flow-line" />
+
+        <path d="M 1100 240 L 1160 200" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 1260 240 L 1207 280" class="flow-line" marker-end="url(#arrowhead)" />
+        <path d="M 1260 240 L 1312 280" class="flow-line" marker-end="url(#arrowhead)" />
+      </svg>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 4 — LIVE PIPELINE ANIMATION
+  ============================================================ -->
+  <section class="slide" data-slide="4">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 03 · PIPELINE EM EXECUÇÃO</div>
+      <div class="slide-num">04 / 08</div>
+    </div>
+
+    <div class="pipeline-container">
+      <div class="pipeline-side">
+        <div class="eyebrow">Demo ao vivo</div>
+        <h2>Veja em <em>tempo real</em></h2>
+        <p class="lead">
+          Escolha um cenário e observe o pipeline rotear o e-mail entre os agentes,
+          com os candidatos fluindo até a consolidação final.
+        </p>
+        <div class="pipeline-controls">
+          <button class="pipe-btn primary" data-scenario="full" id="run-full">
+            <span>▶ Cenário completo</span>
+            <span class="arrow">→</span>
+          </button>
+          <button class="pipe-btn" data-scenario="text">
+            <span>Só texto</span>
+            <span class="arrow">→</span>
+          </button>
+          <button class="pipe-btn" data-scenario="vision">
+            <span>Texto + visão</span>
+            <span class="arrow">→</span>
+          </button>
+          <button class="pipe-btn" data-scenario="attach">
+            <span>Texto + anexo</span>
+            <span class="arrow">→</span>
+          </button>
+          <button class="pipe-btn" data-scenario="reject">
+            <span>E-mail rejeitado</span>
+            <span class="arrow">→</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="pipeline-stage">
+        <div class="stage-header">
+          <span>FLOW · live</span>
+          <span class="status">
+            <span id="pipe-status-text">aguardando</span>
+            <span class="status-dot" id="pipe-status-dot" style="background: var(--text-dim); box-shadow: none; animation: none;"></span>
+          </span>
+        </div>
+        <div class="stage-canvas">
+          <svg id="pipe-svg" viewBox="0 0 900 480" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <marker id="parr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L8,3 z" fill="var(--line)"/>
+              </marker>
+            </defs>
+
+            <!-- Edges -->
+            <path id="edge-trigger-router" d="M 110 240 L 220 240" class="p-edge" />
+            <path id="edge-router-text" d="M 320 240 Q 420 240, 420 120 L 520 120" class="p-edge" />
+            <path id="edge-router-vision" d="M 320 240 L 520 240" class="p-edge" />
+            <path id="edge-router-attach" d="M 320 240 Q 420 240, 420 360 L 520 360" class="p-edge" />
+            <path id="edge-text-merge" d="M 620 120 Q 700 120, 700 240" class="p-edge" />
+            <path id="edge-vision-merge" d="M 620 240 L 700 240" class="p-edge" />
+            <path id="edge-attach-merge" d="M 620 360 Q 700 360, 700 240" class="p-edge" />
+            <path id="edge-merge-consol" d="M 750 240 L 800 240" class="p-edge" />
+
+            <!-- Trigger -->
+            <g class="p-node" id="node-trigger">
+              <circle cx="60" cy="240" r="32" class="p-node-bg" style="color: var(--accent-router);" />
+              <text x="60" y="244" class="p-node-icon" style="fill: var(--accent-router);">✉</text>
+              <text x="60" y="290" class="p-node-name">e-mail</text>
+            </g>
+
+            <!-- Router (Agente 1) -->
+            <g class="p-node" id="node-router">
+              <rect x="220" y="200" width="100" height="80" rx="10" class="p-node-bg" style="color: var(--accent-router);" />
+              <text x="270" y="232" class="p-node-icon" style="fill: var(--accent-router); font-size: 14px;">A1</text>
+              <text x="270" y="252" class="p-node-name" style="font-size: 11px;">router</text>
+              <text x="270" y="305" class="p-node-role">classificador</text>
+            </g>
+
+            <!-- Text agent -->
+            <g class="p-node" id="node-text">
+              <rect x="520" y="80" width="100" height="80" rx="10" class="p-node-bg" style="color: var(--accent-2);" />
+              <text x="570" y="112" class="p-node-icon" style="fill: var(--accent-2); font-size: 14px;">A2</text>
+              <text x="570" y="132" class="p-node-name" style="font-size: 11px;">texto</text>
+              <text x="570" y="180" class="p-node-role">corpo do e-mail</text>
+            </g>
+
+            <!-- Vision agent -->
+            <g class="p-node" id="node-vision">
+              <rect x="520" y="200" width="100" height="80" rx="10" class="p-node-bg" style="color: var(--accent-3);" />
+              <text x="570" y="232" class="p-node-icon" style="fill: var(--accent-3); font-size: 14px;">A3</text>
+              <text x="570" y="252" class="p-node-name" style="font-size: 11px;">visão</text>
+              <text x="570" y="305" class="p-node-role">imagens inline</text>
+            </g>
+
+            <!-- Attachment agent -->
+            <g class="p-node" id="node-attach">
+              <rect x="520" y="320" width="100" height="80" rx="10" class="p-node-bg" style="color: var(--accent-4);" />
+              <text x="570" y="352" class="p-node-icon" style="fill: var(--accent-4); font-size: 14px;">A4</text>
+              <text x="570" y="372" class="p-node-name" style="font-size: 11px;">anexos</text>
+              <text x="570" y="425" class="p-node-role">pdf · xlsx · docx</text>
+            </g>
+
+            <!-- Merge -->
+            <g class="p-node" id="node-merge">
+              <circle cx="725" cy="240" r="22" class="p-node-bg" style="color: var(--text-muted);" />
+              <text x="725" y="245" class="p-node-icon" style="fill: var(--text); font-size: 12px;">⊕</text>
+            </g>
+
+            <!-- Consolidator -->
+            <g class="p-node" id="node-consol">
+              <rect x="800" y="200" width="80" height="80" rx="10" class="p-node-bg" style="color: var(--accent-5);" />
+              <text x="840" y="232" class="p-node-icon" style="fill: var(--accent-5); font-size: 14px;">A5</text>
+              <text x="840" y="252" class="p-node-name" style="font-size: 11px;">final</text>
+              <text x="840" y="305" class="p-node-role">consolidador</text>
+            </g>
+
+            <!-- Particles container -->
+            <g id="particles"></g>
+          </svg>
+
+          <div class="log-output" id="pipe-log">
+            <div class="log-line"><span class="log-time">--:--:--</span><span class="log-tag">[idle]</span><span class="log-msg">Aguardando cenário…</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 5 — AGENT CARDS
+  ============================================================ -->
+  <section class="slide" data-slide="5">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 04 · OS AGENTES</div>
+      <div class="slide-num">05 / 08</div>
+    </div>
+
+    <div class="agents-title">
+      <div class="eyebrow">Cada agente, uma especialidade</div>
+      <h2>Especialistas <em>delimitados</em></h2>
+      <div class="caption">
+        Nenhum agente vê tudo. Os limites são parte do design — eles isolam falhas,
+        permitem prompts focados e tornam o sistema auditável caso a caso.
+      </div>
+    </div>
+
+    <div class="agents-grid">
+      <div class="agent-card" style="--agent-color: var(--accent-router);">
+        <div class="agent-num">01</div>
+        <div class="agent-icon" style="background: rgba(255,209,102,0.1);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M6 12h12M10 18h4" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="agent-role">Router</div>
+        <div class="agent-name">O <em>classificador</em></div>
+        <div class="agent-desc">
+          Lê metadados — assunto, tamanho de imagens, tipos de anexo — e decide se o e-mail
+          é de agendamento e quais especialistas precisam ser acionados.
+        </div>
+        <div class="agent-meta">
+          <div class="row"><span>modelo</span><span class="v">gpt-5-mini</span></div>
+          <div class="row"><span>vê</span><span class="v">só metadados</span></div>
+          <div class="row"><span>decide</span><span class="v">3 rotas</span></div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--agent-color: var(--accent-2);">
+        <div class="agent-num">02</div>
+        <div class="agent-icon" style="background: rgba(109,179,242,0.1);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="agent-role">Texto</div>
+        <div class="agent-name">O <em>extrator</em> textual</div>
+        <div class="agent-desc">
+          Identifica requester vs. recipient, rastreia threads para encontrar a confirmação
+          original e extrai shipment, data e senha do corpo do e-mail.
+        </div>
+        <div class="agent-meta">
+          <div class="row"><span>modelo</span><span class="v">gpt-5-mini</span></div>
+          <div class="row"><span>vê</span><span class="v">markdown</span></div>
+          <div class="row"><span>regra-ouro</span><span class="v">accepted=recipient</span></div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--agent-color: var(--accent-3);">
+        <div class="agent-num">03</div>
+        <div class="agent-icon" style="background: rgba(192,132,245,0.1);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="9" cy="9" r="1.5" fill="currentColor"/>
+            <path d="M21 15l-6-6L4 20" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="agent-role">Visão</div>
+        <div class="agent-name">O <em>leitor</em> visual</div>
+        <div class="agent-desc">
+          Recebe imagens inline e prints de tabelas. Lê pixels que viraram informação:
+          screenshots de portais, planilhas coladas como imagem, comprovantes escaneados.
+        </div>
+        <div class="agent-meta">
+          <div class="row"><span>modelo</span><span class="v">gpt-5 vision</span></div>
+          <div class="row"><span>vê</span><span class="v">imagens base64</span></div>
+          <div class="row"><span>filtro</span><span class="v">≥ 250×100 px</span></div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--agent-color: var(--accent-4);">
+        <div class="agent-num">04</div>
+        <div class="agent-icon" style="background: rgba(92,209,160,0.1);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <path d="M14 2v6h6M9 13h6M9 17h6"/>
+          </svg>
+        </div>
+        <div class="agent-role">Anexos</div>
+        <div class="agent-name">O <em>parser</em> de anexos</div>
+        <div class="agent-desc">
+          Trabalha com texto já extraído de PDFs e DOCX, e linhas de XLSX/CSV como JSON.
+          Mapeia colunas variadas (Carga, Shipment, Senha, Protocolo) para um schema único.
+        </div>
+        <div class="agent-meta">
+          <div class="row"><span>modelo</span><span class="v">gpt-5</span></div>
+          <div class="row"><span>vê</span><span class="v">conteúdo extraído</span></div>
+          <div class="row"><span>tipos</span><span class="v">pdf · xlsx · docx · csv</span></div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--agent-color: var(--accent-5);">
+        <div class="agent-num">05</div>
+        <div class="agent-icon" style="background: rgba(240,129,108,0.1);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="agent-role">Consolidador</div>
+        <div class="agent-name">O <em>juiz</em> final</div>
+        <div class="agent-desc">
+          Agrupa candidatos por shipment, faz merge complementar quando faltam campos
+          e resolve conflitos por confiança e fonte. Não lê o e-mail — só pesa evidências.
+        </div>
+        <div class="agent-meta">
+          <div class="row"><span>modelo</span><span class="v">gpt-5-mini</span></div>
+          <div class="row"><span>vê</span><span class="v">só candidatos</span></div>
+          <div class="row"><span>saída</span><span class="v">um registro/carga</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 6 — DECISION TREE
+  ============================================================ -->
+  <section class="slide" data-slide="6">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 05 · DECISÕES DE ROTEAMENTO</div>
+      <div class="slide-num">06 / 08</div>
+    </div>
+
+    <div class="decision-grid">
+      <div class="decision-left">
+        <div class="eyebrow">Como o roteador decide</div>
+        <h2>Custo controlado <em>por desenho</em></h2>
+        <p class="lead">
+          A maioria dos e-mails nunca aciona um modelo caro de visão. O classificador
+          inspeciona apenas metadados e descarta cedo quando pode.
+        </p>
+
+        <div class="decision-points">
+          <div class="dp">
+            <div class="dp-num">01</div>
+            <div class="dp-text">
+              <strong>Filtros baratos primeiro.</strong> Lixo, próprio remetente e e-mails
+              automáticos são removidos por código antes de qualquer LLM ser chamado.
+            </div>
+          </div>
+          <div class="dp">
+            <div class="dp-num">02</div>
+            <div class="dp-text">
+              <strong>Visão só quando vale a pena.</strong> Imagens menores que 250×100 px ou
+              classificadas como assinatura/ícone não disparam o agente de visão.
+            </div>
+          </div>
+          <div class="dp">
+            <div class="dp-num">03</div>
+            <div class="dp-text">
+              <strong>Paralelismo onde possível.</strong> Texto, visão e anexos rodam em paralelo
+              quando todos são necessários — só convergem na consolidação.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision-tree-wrap">
+        <svg viewBox="0 0 600 580" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <marker id="dt-arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="var(--line)"/>
+            </marker>
+          </defs>
+
+          <!-- Root: incoming email -->
+          <rect x="220" y="0" width="160" height="44" rx="8" class="dt-node-bg" />
+          <text x="300" y="20" class="dt-label" style="font-size: 9px; fill: var(--text-muted);">ENTRADA</text>
+          <text x="300" y="34" class="dt-label title">e-mail recebido</text>
+
+          <!-- Edge -->
+          <line x1="300" y1="44" x2="300" y2="80" class="dt-edge" marker-end="url(#dt-arr)" />
+
+          <!-- Decision 1: lixo? -->
+          <polygon points="300,80 380,120 300,160 220,120" class="dt-node-bg diamond" />
+          <text x="300" y="118" class="dt-label title">é lixo?</text>
+          <text x="300" y="134" class="dt-label" style="font-size: 9px; fill: var(--text-dim);">filtro código</text>
+
+          <!-- Yes lixo -> trash -->
+          <line x1="380" y1="120" x2="500" y2="120" class="dt-edge" marker-end="url(#dt-arr)" />
+          <text x="430" y="114" class="dt-edge-label no">SIM</text>
+          <rect x="500" y="100" width="80" height="40" rx="6" class="dt-node-bg" />
+          <text x="540" y="124" class="dt-label" style="font-size: 10px;">descarta</text>
+
+          <!-- No lixo -> down -->
+          <line x1="300" y1="160" x2="300" y2="200" class="dt-edge" marker-end="url(#dt-arr)" />
+          <text x="312" y="180" class="dt-edge-label yes">NÃO</text>
+
+          <!-- Decision 2: classifier -->
+          <polygon points="300,200 380,240 300,280 220,240" class="dt-node-bg diamond" />
+          <text x="300" y="234" class="dt-label title">é de</text>
+          <text x="300" y="248" class="dt-label title">agendamento?</text>
+          <text x="300" y="262" class="dt-label" style="font-size: 9px; fill: var(--accent-router);">agente 1</text>
+
+          <!-- No -> skip -->
+          <line x1="220" y1="240" x2="100" y2="240" class="dt-edge" marker-end="url(#dt-arr)" />
+          <text x="160" y="232" class="dt-edge-label no">NÃO</text>
+          <rect x="20" y="220" width="80" height="40" rx="6" class="dt-node-bg" />
+          <text x="60" y="244" class="dt-label" style="font-size: 10px;">próximo</text>
+
+          <!-- Yes -> down -->
+          <line x1="300" y1="280" x2="300" y2="310" class="dt-edge" />
+          <text x="312" y="300" class="dt-edge-label yes">SIM</text>
+
+          <!-- Branch into 3 specialists -->
+          <line x1="300" y1="310" x2="120" y2="310" class="dt-edge" />
+          <line x1="300" y1="310" x2="480" y2="310" class="dt-edge" />
+          <line x1="120" y1="310" x2="120" y2="340" class="dt-edge" marker-end="url(#dt-arr)" />
+          <line x1="300" y1="310" x2="300" y2="340" class="dt-edge" marker-end="url(#dt-arr)" />
+          <line x1="480" y1="310" x2="480" y2="340" class="dt-edge" marker-end="url(#dt-arr)" />
+
+          <!-- Three condition checks -->
+          <rect x="50" y="340" width="140" height="60" rx="8" class="dt-node-bg" style="stroke: var(--accent-2);" />
+          <text x="120" y="360" class="dt-label title" style="fill: var(--accent-2);">há texto?</text>
+          <text x="120" y="378" class="dt-label" style="font-size: 9px;">plain_text &gt; 0</text>
+          <text x="120" y="392" class="dt-label" style="font-size: 9px; fill: var(--text-dim);">→ agente 2</text>
+
+          <rect x="230" y="340" width="140" height="60" rx="8" class="dt-node-bg" style="stroke: var(--accent-3);" />
+          <text x="300" y="360" class="dt-label title" style="fill: var(--accent-3);">há imagens?</text>
+          <text x="300" y="378" class="dt-label" style="font-size: 9px;">conteúdo, não ícone</text>
+          <text x="300" y="392" class="dt-label" style="font-size: 9px; fill: var(--text-dim);">→ agente 3</text>
+
+          <rect x="410" y="340" width="140" height="60" rx="8" class="dt-node-bg" style="stroke: var(--accent-4);" />
+          <text x="480" y="360" class="dt-label title" style="fill: var(--accent-4);">há anexos?</text>
+          <text x="480" y="378" class="dt-label" style="font-size: 9px;">pdf · xlsx · docx</text>
+          <text x="480" y="392" class="dt-label" style="font-size: 9px; fill: var(--text-dim);">→ agente 4</text>
+
+          <!-- Merge -->
+          <line x1="120" y1="400" x2="120" y2="430" class="dt-edge" />
+          <line x1="300" y1="400" x2="300" y2="430" class="dt-edge" />
+          <line x1="480" y1="400" x2="480" y2="430" class="dt-edge" />
+          <line x1="120" y1="430" x2="480" y2="430" class="dt-edge" />
+          <line x1="300" y1="430" x2="300" y2="450" class="dt-edge" marker-end="url(#dt-arr)" />
+
+          <!-- Consolidator -->
+          <rect x="220" y="450" width="160" height="50" rx="8" class="dt-node-bg" style="stroke: var(--accent-5);" />
+          <text x="300" y="472" class="dt-label title" style="fill: var(--accent-5);">consolidador</text>
+          <text x="300" y="490" class="dt-label" style="font-size: 9px;">merge + revisão</text>
+
+          <!-- Final split -->
+          <line x1="300" y1="500" x2="300" y2="520" class="dt-edge" />
+          <polygon points="300,520 360,540 300,560 240,540" class="dt-node-bg diamond" />
+          <text x="300" y="544" class="dt-label title" style="font-size: 10px;">precisa revisão?</text>
+
+          <line x1="240" y1="540" x2="180" y2="540" class="dt-edge" marker-end="url(#dt-arr)" />
+          <line x1="360" y1="540" x2="420" y2="540" class="dt-edge" marker-end="url(#dt-arr)" />
+
+          <rect x="100" y="520" width="80" height="40" rx="6" class="dt-node-bg" />
+          <text x="140" y="538" class="dt-label" style="font-size: 9px; fill: var(--accent);">SIM</text>
+          <text x="140" y="552" class="dt-label" style="font-size: 9px;">fila revisão</text>
+
+          <rect x="420" y="520" width="80" height="40" rx="6" class="dt-node-bg" />
+          <text x="460" y="538" class="dt-label" style="font-size: 9px; fill: var(--accent-4);">NÃO</text>
+          <text x="460" y="552" class="dt-label" style="font-size: 9px;">email_tasks</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 7 — CONSOLIDATION
+  ============================================================ -->
+  <section class="slide" data-slide="7">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 06 · CONSOLIDAÇÃO</div>
+      <div class="slide-num">07 / 08</div>
+    </div>
+
+    <div class="consol-title">
+      <div class="eyebrow">A negociação final</div>
+      <h2>Três <em>verdades</em>, uma resposta</h2>
+      <div class="caption">
+        Cada especialista produz candidatos com confiança por campo. O consolidador agrupa
+        por shipment, faz merge complementar quando faltam campos, e resolve conflitos por
+        evidência — não por opinião.
+      </div>
+    </div>
+
+    <div class="consol-flow">
+      <div class="consol-sources">
+        <div class="candidate-card" style="--c-color: var(--accent-2);">
+          <div class="src">▸ texto · agente 2</div>
+          <div class="field"><span>shipment</span><span class="v">8847291</span></div>
+          <div class="field"><span>accepted</span><span class="v">true</span></div>
+          <div class="field null"><span>scheduled_date</span><span class="v">null</span></div>
+          <div class="field null"><span>password</span><span class="v">null</span></div>
+          <div class="conf">
+            <div class="conf-bar"><div class="fill" style="width: 92%"></div></div>
+            <span class="conf-val">0.92</span>
+          </div>
+        </div>
+
+        <div class="candidate-card" style="--c-color: var(--accent-3);">
+          <div class="src">▸ visão · agente 3</div>
+          <div class="field"><span>shipment</span><span class="v">8847291</span></div>
+          <div class="field null"><span>accepted</span><span class="v">null</span></div>
+          <div class="field"><span>scheduled_date</span><span class="v">2026-04-28 14:00</span></div>
+          <div class="field"><span>password</span><span class="v">ON-44218</span></div>
+          <div class="conf">
+            <div class="conf-bar"><div class="fill" style="width: 78%"></div></div>
+            <span class="conf-val">0.78</span>
+          </div>
+        </div>
+
+        <div class="candidate-card" style="--c-color: var(--accent-4);">
+          <div class="src">▸ anexo · agente 4</div>
+          <div class="field"><span>shipment</span><span class="v">8847291</span></div>
+          <div class="field"><span>accepted</span><span class="v">true</span></div>
+          <div class="field"><span>scheduled_date</span><span class="v">2026-04-28 14:00</span></div>
+          <div class="field"><span>password</span><span class="v">ON-44218</span></div>
+          <div class="conf">
+            <div class="conf-bar"><div class="fill" style="width: 95%"></div></div>
+            <span class="conf-val">0.95</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="consol-merge-wrap">
+        <svg class="consol-merge-svg" viewBox="0 0 300 280">
+          <!-- Lines from candidates -->
+          <path d="M 0 60 Q 100 60, 130 130" class="merge-line active" style="stroke: var(--accent-2);" />
+          <path d="M 0 140 L 130 140" class="merge-line active" style="stroke: var(--accent-3);" />
+          <path d="M 0 220 Q 100 220, 130 150" class="merge-line active" style="stroke: var(--accent-4);" />
+
+          <!-- Particles flowing -->
+          <circle r="4" class="particle" style="fill: var(--accent-2);">
+            <animateMotion dur="2s" repeatCount="indefinite" path="M 0 60 Q 100 60, 130 130" />
+          </circle>
+          <circle r="4" class="particle" style="fill: var(--accent-3);">
+            <animateMotion dur="2s" repeatCount="indefinite" begin="0.3s" path="M 0 140 L 130 140" />
+          </circle>
+          <circle r="4" class="particle" style="fill: var(--accent-4);">
+            <animateMotion dur="2s" repeatCount="indefinite" begin="0.6s" path="M 0 220 Q 100 220, 130 150" />
+          </circle>
+
+          <!-- Output line -->
+          <path d="M 175 140 L 300 140" class="merge-line active" />
+          <circle r="4" class="particle">
+            <animateMotion dur="1.6s" repeatCount="indefinite" path="M 175 140 L 300 140" />
+          </circle>
+
+          <!-- Core consolidator -->
+          <circle cx="152" cy="140" r="32" class="merge-core" />
+          <text x="152" y="138" class="merge-core-text">A5</text>
+          <text x="152" y="156" class="merge-core-sub">MERGE</text>
+
+          <!-- Pulse -->
+          <circle cx="152" cy="140" r="32" fill="none" stroke="var(--accent)" stroke-width="1" opacity="0.4">
+            <animate attributeName="r" from="32" to="60" dur="2s" repeatCount="indefinite" />
+            <animate attributeName="opacity" from="0.4" to="0" dur="2s" repeatCount="indefinite" />
+          </circle>
+        </svg>
+      </div>
+
+      <div class="consol-output">
+        <div class="field"><span class="k">shipment_number</span><span class="v">8847291</span></div>
+        <div class="field"><span class="k">accepted</span><span class="v accept">true</span><span class="src-tag">[texto+anexo]</span></div>
+        <div class="field"><span class="k">scheduled_date</span><span class="v">2026-04-28 14:00</span><span class="src-tag">[visão+anexo]</span></div>
+        <div class="field"><span class="k">password</span><span class="v">ON-44218</span><span class="src-tag">[visão+anexo]</span></div>
+        <div class="field"><span class="k">confidence</span><span class="v">0.94</span></div>
+        <div class="field"><span class="k">needs_review</span><span class="v" style="color: var(--accent-4);">false</span></div>
+        <div class="field"><span class="k">→ destino</span><span class="v" style="color: var(--accent);">email_tasks</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SLIDE 8 — IMPACT / CLOSING
+  ============================================================ -->
+  <section class="slide" data-slide="8">
+    <div class="slide-chrome">
+      <div class="slide-meta"><span class="dot">●</span> 07 · POR QUE IMPORTA</div>
+      <div class="slide-num">08 / 08</div>
+    </div>
+
+    <div class="impact-grid">
+      <div class="impact-left">
+        <div class="eyebrow">Impacto da arquitetura</div>
+        <h2>
+          Resiliente,<br>
+          <em>auditável,</em><br>
+          barato.
+        </h2>
+        <p class="lead">
+          A separação por agentes não é cosmética. Ela define onde os erros aparecem,
+          quanto custa cada e-mail e como o sistema evolui.
+        </p>
+
+        <div class="impact-numbers">
+          <div class="imp-num">
+            <div class="big"><em>5</em> ag.</div>
+            <div class="desc">cada um com prompt focado, fácil de ajustar sem regredir os outros</div>
+          </div>
+          <div class="imp-num">
+            <div class="big">3 fontes</div>
+            <div class="desc">texto, visão e anexos validam a mesma carga em paralelo</div>
+          </div>
+          <div class="imp-num">
+            <div class="big"><em>1</em> verdade</div>
+            <div class="desc">consolidador final escolhe por confiança e evidência</div>
+          </div>
+          <div class="imp-num">
+            <div class="big">2 filas</div>
+            <div class="desc">tarefas confiáveis vs. fila de revisão humana — sem caixa-preta</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="impact-right">
+        <div class="impact-quote">
+          <q>
+            Quando cada agente vê apenas sua parte, falhas ficam locais.
+            Você não conserta um modelo gigante &mdash; conserta o agente certo.
+          </q>
+          <div class="signature">— princípio de design · pipeline v2</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prev" aria-label="anterior">← anterior</button>
+  <div class="indicator" id="pips"></div>
+  <span class="counter" id="counter">01 / 08</span>
+  <button id="next" aria-label="próximo">próximo →</button>
+</div>
+
+<div class="intro-hint">use ← → ou clique nos pontos para navegar</div>
+
+<script>
+// ============================================================
+// DECK NAVIGATION
+// ============================================================
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+let current = 0;
+
+const counter = document.getElementById('counter');
+const pipsContainer = document.getElementById('pips');
+const prevBtn = document.getElementById('prev');
+const nextBtn = document.getElementById('next');
+
+// build pips
+for (let i = 0; i < total; i++) {
+  const pip = document.createElement('div');
+  pip.className = 'pip' + (i === 0 ? ' active' : '');
+  pip.dataset.idx = i;
+  pip.addEventListener('click', () => go(i));
+  pipsContainer.appendChild(pip);
+}
+const pips = pipsContainer.querySelectorAll('.pip');
+
+function go(idx) {
+  if (idx < 0 || idx >= total || idx === current) return;
+  const prev = current;
+  slides[prev].classList.add('exiting');
+  slides[prev].classList.remove('active');
+  current = idx;
+  slides[current].classList.add('active');
+  // cleanup the exiting class after the transition finishes
+  setTimeout(() => slides[prev].classList.remove('exiting'), 700);
+  counter.textContent = String(current + 1).padStart(2, '0') + ' / ' + String(total).padStart(2, '0');
+  pips.forEach((p, i) => p.classList.toggle('active', i === current));
+  prevBtn.disabled = current === 0;
+  nextBtn.disabled = current === total - 1;
+  maybeAutoRunPipeline();
+}
+
+prevBtn.addEventListener('click', () => go(current - 1));
+nextBtn.addEventListener('click', () => go(current + 1));
+prevBtn.disabled = true;
+
+document.addEventListener('keydown', (e) => {
+  // ignore keys when typing in an input (none here, but defensive)
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(current + 1); }
+  if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(current - 1); }
+  if (e.key === 'Home') { e.preventDefault(); go(0); }
+  if (e.key === 'End') { e.preventDefault(); go(total - 1); }
+});
+
+// ============================================================
+// PIPELINE ANIMATION (Slide 4)
+// ============================================================
+const pipeSvg = document.getElementById('pipe-svg');
+const particlesG = document.getElementById('particles');
+const log = document.getElementById('pipe-log');
+const statusText = document.getElementById('pipe-status-text');
+const statusDot = document.getElementById('pipe-status-dot');
+
+const NS = 'http://www.w3.org/2000/svg';
+
+function setStatus(text, color) {
+  statusText.textContent = text;
+  if (color) {
+    statusDot.style.background = color;
+    statusDot.style.boxShadow = '0 0 12px ' + color;
+    statusDot.style.animation = 'blink 1.2s ease-in-out infinite';
+  } else {
+    statusDot.style.background = 'var(--text-dim)';
+    statusDot.style.boxShadow = 'none';
+    statusDot.style.animation = 'none';
+  }
+}
+
+function nowStr() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8);
+}
+
+function addLog(tag, msg, color) {
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `
+    <span class="log-time">${nowStr()}</span>
+    <span class="log-tag" style="${color ? 'color:' + color : ''}">${tag}</span>
+    <span class="log-msg">${msg}</span>
+  `;
+  log.appendChild(line);
+  // keep only the last few
+  while (log.children.length > 4) log.removeChild(log.firstChild);
+}
+
+function clearLog() {
+  log.innerHTML = '';
+}
+
+function activateNode(id, color) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.classList.add('active');
+  const bg = node.querySelector('.p-node-bg');
+  if (bg && color) bg.style.color = color;
+}
+function deactivateNode(id) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.classList.remove('active');
+}
+function clearAllNodes() {
+  document.querySelectorAll('.p-node').forEach(n => n.classList.remove('active', 'done'));
+  document.querySelectorAll('.p-edge').forEach(e => e.classList.remove('active'));
+}
+
+function activateEdge(id, color) {
+  const edge = document.getElementById(id);
+  if (!edge) return;
+  edge.classList.add('active');
+  if (color) edge.style.stroke = color;
+}
+
+function fireParticle(pathId, color, duration = 900) {
+  const path = document.getElementById(pathId);
+  if (!path) return Promise.resolve();
+  const length = path.getTotalLength();
+  const circle = document.createElementNS(NS, 'circle');
+  circle.setAttribute('r', '5');
+  circle.setAttribute('class', 'particle');
+  circle.style.fill = color || 'var(--accent)';
+  circle.style.color = color || 'var(--accent)';
+  particlesG.appendChild(circle);
+
+  return new Promise(resolve => {
+    const start = performance.now();
+    function step(t) {
+      const p = Math.min((t - start) / duration, 1);
+      const eased = p < 0.5 ? 2*p*p : 1 - Math.pow(-2*p + 2, 2) / 2;
+      const pt = path.getPointAtLength(eased * length);
+      circle.setAttribute('cx', pt.x);
+      circle.setAttribute('cy', pt.y);
+      if (p < 1) requestAnimationFrame(step);
+      else { circle.remove(); resolve(); }
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+function fireBurst(pathId, color, count = 5, intervalMs = 120, duration = 900) {
+  return new Promise(resolve => {
+    let done = 0;
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => {
+        fireParticle(pathId, color, duration).then(() => {
+          done++;
+          if (done === count) resolve();
+        });
+      }, i * intervalMs);
+    }
+  });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Scenarios
+const scenarios = {
+  full: async () => {
+    clearAllNodes();
+    clearLog();
+    setStatus('executando · cenário completo', 'var(--accent)');
+
+    addLog('[capt]', 'novo e-mail recebido · solicitação de agendamento', 'var(--accent-2)');
+    activateNode('node-trigger', 'var(--accent-router)');
+    await sleep(400);
+
+    activateEdge('edge-trigger-router', 'var(--accent-router)');
+    await fireParticle('edge-trigger-router', 'var(--accent-router)', 800);
+
+    addLog('[A1]', 'classificador analisando metadados…', 'var(--accent-router)');
+    activateNode('node-router', 'var(--accent-router)');
+    await sleep(900);
+    addLog('[A1]', 'roteado para → texto · visão · anexos', 'var(--accent-router)');
+
+    // Fan out
+    activateEdge('edge-router-text', 'var(--accent-2)');
+    activateEdge('edge-router-vision', 'var(--accent-3)');
+    activateEdge('edge-router-attach', 'var(--accent-4)');
+
+    Promise.all([
+      fireParticle('edge-router-text', 'var(--accent-2)', 700),
+      fireParticle('edge-router-vision', 'var(--accent-3)', 700),
+      fireParticle('edge-router-attach', 'var(--accent-4)', 700)
+    ]);
+    await sleep(700);
+
+    activateNode('node-text', 'var(--accent-2)');
+    activateNode('node-vision', 'var(--accent-3)');
+    activateNode('node-attach', 'var(--accent-4)');
+    addLog('[A2]', 'extraindo do corpo do e-mail (markdown)', 'var(--accent-2)');
+    await sleep(400);
+    addLog('[A3]', 'lendo imagens inline · 1 print de tabela', 'var(--accent-3)');
+    await sleep(400);
+    addLog('[A4]', 'parseando 1 PDF + 1 XLSX (12 linhas)', 'var(--accent-4)');
+    await sleep(800);
+
+    addLog('[A2]', '✓ candidato extraído (conf 0.92)', 'var(--accent-2)');
+    addLog('[A3]', '✓ candidato extraído (conf 0.78)', 'var(--accent-3)');
+    addLog('[A4]', '✓ candidato extraído (conf 0.95)', 'var(--accent-4)');
+
+    activateEdge('edge-text-merge', 'var(--accent-2)');
+    activateEdge('edge-vision-merge', 'var(--accent-3)');
+    activateEdge('edge-attach-merge', 'var(--accent-4)');
+
+    Promise.all([
+      fireParticle('edge-text-merge', 'var(--accent-2)', 700),
+      fireParticle('edge-vision-merge', 'var(--accent-3)', 700),
+      fireParticle('edge-attach-merge', 'var(--accent-4)', 700)
+    ]);
+    await sleep(750);
+
+    activateNode('node-merge', 'var(--accent)');
+    addLog('[mrg]', 'unindo 3 candidatos por shipment_number', 'var(--text-muted)');
+    await sleep(500);
+
+    activateEdge('edge-merge-consol', 'var(--accent)');
+    await fireParticle('edge-merge-consol', 'var(--accent)', 700);
+
+    activateNode('node-consol', 'var(--accent-5)');
+    addLog('[A5]', 'consolidando · resolvendo conflitos por confiança', 'var(--accent-5)');
+    await sleep(900);
+    addLog('[A5]', '✓ registro final · accepted=true · senha=ON-44218', 'var(--accent-4)');
+    await sleep(400);
+    addLog('[db ]', 'gravado em supabase.email_tasks', 'var(--accent)');
+
+    setStatus('concluído', 'var(--accent-4)');
+  },
+
+  text: async () => {
+    clearAllNodes(); clearLog();
+    setStatus('executando · só texto', 'var(--accent)');
+
+    addLog('[capt]', 'e-mail simples · sem anexos, sem imagens', 'var(--accent-2)');
+    activateNode('node-trigger', 'var(--accent-router)');
+    await sleep(300);
+    activateEdge('edge-trigger-router', 'var(--accent-router)');
+    await fireParticle('edge-trigger-router', 'var(--accent-router)', 700);
+
+    activateNode('node-router', 'var(--accent-router)');
+    addLog('[A1]', 'roteado para → texto', 'var(--accent-router)');
+    await sleep(700);
+
+    activateEdge('edge-router-text', 'var(--accent-2)');
+    await fireParticle('edge-router-text', 'var(--accent-2)', 700);
+
+    activateNode('node-text', 'var(--accent-2)');
+    addLog('[A2]', 'extraindo confirmação do thread…', 'var(--accent-2)');
+    await sleep(900);
+    addLog('[A2]', '✓ candidato extraído (conf 0.88)', 'var(--accent-2)');
+
+    activateEdge('edge-text-merge', 'var(--accent-2)');
+    await fireParticle('edge-text-merge', 'var(--accent-2)', 700);
+
+    activateNode('node-merge', 'var(--accent)');
+    activateEdge('edge-merge-consol', 'var(--accent)');
+    await fireParticle('edge-merge-consol', 'var(--accent)', 600);
+
+    activateNode('node-consol', 'var(--accent-5)');
+    addLog('[A5]', 'apenas 1 candidato · passa direto', 'var(--accent-5)');
+    await sleep(600);
+    addLog('[db ]', 'gravado em supabase.email_tasks', 'var(--accent)');
+
+    setStatus('concluído', 'var(--accent-4)');
+  },
+
+  vision: async () => {
+    clearAllNodes(); clearLog();
+    setStatus('executando · texto + visão', 'var(--accent)');
+
+    addLog('[capt]', 'e-mail com print de portal (tabela)', 'var(--accent-2)');
+    activateNode('node-trigger', 'var(--accent-router)');
+    await sleep(300);
+    activateEdge('edge-trigger-router', 'var(--accent-router)');
+    await fireParticle('edge-trigger-router', 'var(--accent-router)', 700);
+
+    activateNode('node-router', 'var(--accent-router)');
+    addLog('[A1]', 'imagem 480×280 px · likely_content', 'var(--accent-router)');
+    await sleep(500);
+    addLog('[A1]', 'roteado para → texto · visão', 'var(--accent-router)');
+    await sleep(400);
+
+    activateEdge('edge-router-text', 'var(--accent-2)');
+    activateEdge('edge-router-vision', 'var(--accent-3)');
+    Promise.all([
+      fireParticle('edge-router-text', 'var(--accent-2)', 700),
+      fireParticle('edge-router-vision', 'var(--accent-3)', 700)
+    ]);
+    await sleep(750);
+
+    activateNode('node-text', 'var(--accent-2)');
+    activateNode('node-vision', 'var(--accent-3)');
+    addLog('[A2]', 'corpo curto · só assinatura', 'var(--accent-2)');
+    addLog('[A3]', 'lendo tabela na imagem (gpt-5 vision)', 'var(--accent-3)');
+    await sleep(1100);
+    addLog('[A2]', '✓ candidato (sem campos chave)', 'var(--accent-2)');
+    addLog('[A3]', '✓ candidato extraído (conf 0.84)', 'var(--accent-3)');
+
+    activateEdge('edge-text-merge', 'var(--accent-2)');
+    activateEdge('edge-vision-merge', 'var(--accent-3)');
+    Promise.all([
+      fireParticle('edge-text-merge', 'var(--accent-2)', 700),
+      fireParticle('edge-vision-merge', 'var(--accent-3)', 700)
+    ]);
+    await sleep(750);
+
+    activateNode('node-merge', 'var(--accent)');
+    activateEdge('edge-merge-consol', 'var(--accent)');
+    await fireParticle('edge-merge-consol', 'var(--accent)', 600);
+
+    activateNode('node-consol', 'var(--accent-5)');
+    addLog('[A5]', 'merge complementar · visão preenche campos', 'var(--accent-5)');
+    await sleep(700);
+    addLog('[db ]', 'gravado em supabase.email_tasks', 'var(--accent)');
+
+    setStatus('concluído', 'var(--accent-4)');
+  },
+
+  attach: async () => {
+    clearAllNodes(); clearLog();
+    setStatus('executando · texto + anexo', 'var(--accent)');
+
+    addLog('[capt]', 'e-mail com xlsx · 12 cargas', 'var(--accent-2)');
+    activateNode('node-trigger', 'var(--accent-router)');
+    await sleep(300);
+    activateEdge('edge-trigger-router', 'var(--accent-router)');
+    await fireParticle('edge-trigger-router', 'var(--accent-router)', 700);
+
+    activateNode('node-router', 'var(--accent-router)');
+    addLog('[A1]', 'roteado para → texto · anexos', 'var(--accent-router)');
+    await sleep(600);
+
+    activateEdge('edge-router-text', 'var(--accent-2)');
+    activateEdge('edge-router-attach', 'var(--accent-4)');
+    Promise.all([
+      fireParticle('edge-router-text', 'var(--accent-2)', 700),
+      fireParticle('edge-router-attach', 'var(--accent-4)', 700)
+    ]);
+    await sleep(750);
+
+    activateNode('node-text', 'var(--accent-2)');
+    activateNode('node-attach', 'var(--accent-4)');
+    addLog('[A2]', 'corpo: solicitação genérica', 'var(--accent-2)');
+    addLog('[A4]', 'parseando xlsx → 12 linhas', 'var(--accent-4)');
+    await sleep(1100);
+    addLog('[A4]', '✓ 12 candidatos (1 por carga)', 'var(--accent-4)');
+
+    activateEdge('edge-text-merge', 'var(--accent-2)');
+    activateEdge('edge-attach-merge', 'var(--accent-4)');
+    Promise.all([
+      fireBurst('edge-text-merge', 'var(--accent-2)', 1),
+      fireBurst('edge-attach-merge', 'var(--accent-4)', 6, 90, 700)
+    ]);
+    await sleep(900);
+
+    activateNode('node-merge', 'var(--accent)');
+    activateEdge('edge-merge-consol', 'var(--accent)');
+    await fireBurst('edge-merge-consol', 'var(--accent)', 3, 200, 700);
+
+    activateNode('node-consol', 'var(--accent-5)');
+    addLog('[A5]', 'agrupando 12 shipments distintos', 'var(--accent-5)');
+    await sleep(700);
+    addLog('[db ]', '12 registros · supabase.email_tasks', 'var(--accent)');
+
+    setStatus('concluído', 'var(--accent-4)');
+  },
+
+  reject: async () => {
+    clearAllNodes(); clearLog();
+    setStatus('executando · rejeição', 'var(--accent-5)');
+
+    addLog('[capt]', 'newsletter automática · noreply@…', 'var(--text-muted)');
+    activateNode('node-trigger', 'var(--text-muted)');
+    await sleep(400);
+    activateEdge('edge-trigger-router', 'var(--text-muted)');
+    await fireParticle('edge-trigger-router', 'var(--text-muted)', 700);
+
+    activateNode('node-router', 'var(--accent-router)');
+    addLog('[A1]', 'classificador analisando…', 'var(--accent-router)');
+    await sleep(800);
+    addLog('[A1]', '✗ não é de agendamento', 'var(--accent-5)');
+    await sleep(400);
+    addLog('[esc]', 'descartado · próximo e-mail', 'var(--text-muted)');
+
+    setStatus('descartado', 'var(--accent-5)');
+  }
+};
+
+// Wire up scenario buttons
+document.querySelectorAll('.pipe-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const sc = btn.dataset.scenario;
+    if (scenarios[sc]) scenarios[sc]();
+  });
+});
+
+// Auto-run scenario when slide 4 becomes active for the first time.
+// `maybeAutoRunPipeline` is referenced from go() above — function declarations
+// are hoisted within this script block, so this works.
+let pipelineAutoRan = false;
+function maybeAutoRunPipeline() {
+  if (current === 3 && !pipelineAutoRan) {
+    pipelineAutoRan = true;
+    setTimeout(() => scenarios.full(), 600);
+  }
+}
+
+</script>
+</body>
+</html>
